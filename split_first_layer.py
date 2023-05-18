@@ -65,7 +65,7 @@ def parse_gcode(gcode: List[str]) -> List[Segment]:
     extruder_positioning_type: PositioningType = DEFAULT_POSITIONING
     segment_type = DEFAULT_TYPE
 
-    def close_current_segment():
+    def open_new_segment() -> None:
         segments.append(
             Segment(
                 layer=layer,
@@ -80,35 +80,35 @@ def parse_gcode(gcode: List[str]) -> List[Segment]:
         if match := layer_pattern.match(line):
             layer = int(match.group(1))
             segment_type = DEFAULT_TYPE  # reset type
-            close_current_segment()
+            open_new_segment()
 
         if match := type_pattern.match(line):
             segment_type = match.group(1)
-            close_current_segment()
+            open_new_segment()
 
         if get_opcode(line) == "M82":
             extruder_positioning_type = "abs"
-            close_current_segment()
+            open_new_segment()
 
         if get_opcode(line) == "M83":
             extruder_positioning_type = "rel"
-            close_current_segment()
+            open_new_segment()
 
         if get_opcode(line) == "G90":
             positioning_type = "abs"
             extruder_positioning_type = "unset"
-            close_current_segment()
+            open_new_segment()
 
         if get_opcode(line) == "G91":
             positioning_type = "rel"
             extruder_positioning_type = "unset"
-            close_current_segment()
+            open_new_segment()
 
         # turn off sequence start
         # TODO: I used startswith because a comment can follow, use better solution
         if line.startswith("M140 S0"):
             layer = "unset"
-            close_current_segment()
+            open_new_segment()
 
         segments[-1].lines.append(line)
     return segments
