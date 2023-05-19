@@ -230,39 +230,46 @@ def main(input_path: Path, keep_skirt: bool, split_at: int):
     segments = parse_gcode(input_path.read_text())
     first_print_segments = []
     second_print_segments = []
-    prev_segment: Segment | None = None
+
+    first_print_last_e = 0
+    second_print_e_printed = 0
+
     for segment in segments:
         if segment.layer == "unset":
             # put start and stop sequences in both outputs
             first_print_segments.append(replace(segment))
             second_print_segments.append(replace(segment))
+            first_print_last_e = first_print_segments[-1].last_e_position
+            second_print_e_printed += second_print_segments[-1].last_e_position - second_print_segments[-1].start_e_position
 
         elif keep_skirt and segment.type == "SKIRT":
             # put skirt in both outputs if configured
             first_print_segments.append(replace(segment))
             second_print_segments.append(replace(segment))
+            first_print_last_e = first_print_segments[-1].last_e_position
+            second_print_e_printed += second_print_segments[-1].last_e_position - second_print_segments[-1].start_e_position
 
         elif segment.layer <= split_at:
             # add to first print, and add controls to second print, although we mainly care about G92 there.
             first_print_segments.append(replace(segment))
             second_print_segments.append(replace(segment, lines=segment.control_lines))
+            first_print_last_e = first_print_segments[-1].last_e_position
 
-        elif prev_segment:
+        else:
+            print(first_print_last_e + second_print_e_printed, segment.start_e_position)
             second_print_segments.append(
                 replace(
                     segment,
                     lines=[
-                        f"G92 E{prev_segment.last_e_position}",  # in case previous segment was not added, don't over extrude
-                        f"G0 Z{prev_segment.last_z_position}",  # in case previous segment was not added, don't print at wrong height
+                        # TODO: goto previous position or start position before  
+                        f"G92 E{first_print_last_e + second_print_e_printed}",  # in case previous segment was not added, don't over extrude
+                        f"G0 Z{first_print_segments[-1].last_z_position}",  # in case previous segment was not added, don't print at wrong height
                         *segment.lines,
                     ],
+                    start_e_position=first_print_last_e + second_print_e_printed
                 )
             )
-
-        else:
-            second_print_segments.append(replace(segment))
-
-        prev_segment = segment
+            second_print_e_printed += second_print_segments[-1].last_e_position - second_print_segments[-1].start_e_position
 
     max_segment = max(
         segment.layer for segment in second_print_segments if segment.layer != "unset"
