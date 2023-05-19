@@ -109,7 +109,11 @@ class Segment:
 
     @cached_property
     def control_lines(self) -> list[str]:
-        return [line for line in self.lines if get_opcode(line) in CONTROL_OPCODES]
+        return [
+            line
+            for line in self.lines
+            if get_opcode(line) in CONTROL_OPCODES | META_OPCODES
+        ]
 
 
 def parse_gcode(gcode: str) -> list[Segment]:
@@ -144,65 +148,56 @@ def parse_gcode(gcode: str) -> list[Segment]:
     for lineno, line in enumerate(gcode.splitlines()):
         if not line:
             segments[-1].lines.append(line)
-            continue
 
-        if match := layer_pattern.match(line):
+        elif match := layer_pattern.match(line):
             layer = int(match.group(1))
             segment_type = DEFAULT_TYPE  # reset type
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if match := type_pattern.match(line):
+        elif match := type_pattern.match(line):
             segment_type = match.group(1)
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if match := mesh_pattern.match(line):
+        elif match := mesh_pattern.match(line):
             segment_mesh = match.group(1)
             segment_type = "unset"
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if get_opcode(line) == "M82":
+        elif get_opcode(line) == "M82":
             extruder_positioning_type = "abs"
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if get_opcode(line) == "M83":
+        elif get_opcode(line) == "M83":
             extruder_positioning_type = "rel"
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if get_opcode(line) == "G90":
+        elif get_opcode(line) == "G90":
             positioning_type = "abs"
             extruder_positioning_type = "unset"
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if get_opcode(line) == "G91":
+        elif get_opcode(line) == "G91":
             positioning_type = "rel"
             extruder_positioning_type = "unset"
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if line.startswith("M140 S0"):  # turn off sequence start
+        elif line.startswith("M140 S0"):  # turn off sequence start
             layer = "unset"
             open_new_segment()
             segments[-1].lines.append(line)
-            continue
 
-        if get_opcode(line) in MOV_OPCODES | CONTROL_OPCODES | META_OPCODES:
+        elif get_opcode(line) in MOV_OPCODES | CONTROL_OPCODES | META_OPCODES:
             segments[-1].lines.append(line)
-            continue
 
-        raise Exception(f"unknown inst in line num {lineno}: {line!r}")
+        else:
+            raise Exception(f"unknown inst in line num {lineno}: {line!r}")
     return segments
 
 
@@ -235,7 +230,7 @@ def main(input_path: Path, keep_skirt: bool, split_at: int):
     segments = parse_gcode(input_path.read_text())
     first_print_segments = []
     second_print_segments = []
-
+    prev_segment: Segment | None = None
     for segment in segments:
         if segment.layer == "unset":
             # put start and stop sequences in both outputs
@@ -252,24 +247,29 @@ def main(input_path: Path, keep_skirt: bool, split_at: int):
             first_print_segments.append(replace(segment))
             second_print_segments.append(replace(segment, lines=segment.control_lines))
 
-        else:
+        elif prev_segment:
             second_print_segments.append(
                 replace(
                     segment,
                     lines=[
-                        f"G92 E{segment.last_e_position}",  # if previous segment is missing, don't over extrude
-                        f"G0 Z{segment.last_z_position}",  # if previous segment is missing, don't print at wrong height
+                        f"G92 E{prev_segment.last_e_position}",  # in case previous segment was not added, don't over extrude
+                        f"G0 Z{prev_segment.last_z_position}",  # in case previous segment was not added, don't print at wrong height
                         *segment.lines,
                     ],
                 )
             )
+
+        else:
+            second_print_segments.append(replace(segment))
+
+        prev_segment = segment
 
     max_segment = max(
         segment.layer for segment in second_print_segments if segment.layer != "unset"
     )
 
     output = input_path.with_stem(
-        f"{input_path.stem}{format_attrs(layer_start=0, layer_end=split_at, with_skirt=keep_skirt)}"
+        f"{input_path.stem}{format_attrs(layer_start=0, layer_end=split_at, with_skirt=True)}"
     )
     output.write_text(to_gcode(first_print_segments))
 
